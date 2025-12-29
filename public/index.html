@@ -25,12 +25,29 @@
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="/js/auth.js"></script>
     <script>
-        // Redirect if already logged in
-        checkAuth().then(session => {
-            if (session) {
-                window.location.href = '/app.html';
+        // Wait for scripts to load, then redirect if already logged in
+        (function() {
+            function tryCheckAuth() {
+                if (typeof checkAuth === 'function') {
+                    checkAuth().then(session => {
+                        if (session) {
+                            window.location.href = '/app.html';
+                        }
+                    }).catch(err => {
+                        console.error('Auth check error:', err);
+                    });
+                } else {
+                    // Retry after a short delay
+                    setTimeout(tryCheckAuth, 100);
+                }
             }
-        });
+            
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', tryCheckAuth);
+            } else {
+                tryCheckAuth();
+            }
+        })();
     </script>
 </body>
 </html>
