@@ -1,11 +1,5 @@
 {
-  "buildCommand": "pip install -r requirements.txt",
   "outputDirectory": "static",
-  "functions": {
-    "api/index.py": {
-      "runtime": "@vercel/python@3.9"
-    }
-  },
   "rewrites": [
     {
       "source": "/api/(.*)",
