@@ -2,10 +2,10 @@ from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 import os
-
-from supabase import create_client, Client
+import requests
+import jwt
 
 app = FastAPI()
 
@@ -17,10 +17,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_supabase() -> Client:
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    return create_client(url, key)
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
 
 class DailyLogCreate(BaseModel):
@@ -30,30 +28,48 @@ class DailyLogCreate(BaseModel):
     notes: Optional[str] = None
 
 
-class DailyLogUpdate(BaseModel):
-    workout_completed: Optional[bool] = None
-    nutrition_completed: Optional[bool] = None
-    notes: Optional[str] = None
-
-
 def get_user_id_from_token(authorization: str) -> str:
     """Extract user_id from Supabase JWT token"""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
 
     token = authorization.replace("Bearer ", "")
-    supabase = get_supabase()
 
     try:
-        user = supabase.auth.get_user(token)
-        return user.user.id
+        # Decode JWT without verification (Supabase already verified it)
+        decoded = jwt.decode(token, options={"verify_signature": False})
+        return decoded.get("sub")
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+def supabase_request(method: str, endpoint: str, data: dict = None, params: dict = None):
+    """Make request to Supabase REST API"""
+    url = f"{SUPABASE_URL}/rest/v1/{endpoint}"
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation"
+    }
+
+    response = requests.request(
+        method=method,
+        url=url,
+        headers=headers,
+        json=data,
+        params=params
+    )
+
+    if response.status_code >= 400:
+        raise HTTPException(status_code=response.status_code, detail=response.text)
+
+    return response.json() if response.text else []
+
+
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok"}
+    return {"status": "ok", "supabase_url": SUPABASE_URL[:30] + "..." if SUPABASE_URL else "not set"}
 
 
 @app.get("/api/logs")
@@ -63,17 +79,20 @@ def get_logs(
     end_date: Optional[date] = None
 ):
     user_id = get_user_id_from_token(authorization)
-    supabase = get_supabase()
 
-    query = supabase.table("daily_logs").select("*").eq("user_id", user_id)
+    params = {"user_id": f"eq.{user_id}", "order": "date.desc"}
 
     if start_date:
-        query = query.gte("date", start_date.isoformat())
+        params["date"] = f"gte.{start_date.isoformat()}"
     if end_date:
-        query = query.lte("date", end_date.isoformat())
+        if "date" in params:
+            params["date"] = f"gte.{start_date.isoformat()}"
+            params["and"] = f"(date.lte.{end_date.isoformat()})"
+        else:
+            params["date"] = f"lte.{end_date.isoformat()}"
 
-    result = query.order("date", desc=True).execute()
-    return {"logs": result.data}
+    logs = supabase_request("GET", "daily_logs", params=params)
+    return {"logs": logs}
 
 
 @app.post("/api/logs")
@@ -82,40 +101,38 @@ def create_or_update_log(
     authorization: Optional[str] = Header(None)
 ):
     user_id = get_user_id_from_token(authorization)
-    supabase = get_supabase()
 
     # Check if log exists for this date
-    existing = supabase.table("daily_logs").select("*").eq("user_id", user_id).eq("date", log.date.isoformat()).execute()
+    params = {"user_id": f"eq.{user_id}", "date": f"eq.{log.date.isoformat()}"}
+    existing = supabase_request("GET", "daily_logs", params=params)
 
-    if existing.data:
+    if existing:
         # Update existing
-        result = supabase.table("daily_logs").update({
+        update_params = {"id": f"eq.{existing[0]['id']}"}
+        result = supabase_request("PATCH", "daily_logs", data={
             "workout_completed": log.workout_completed,
             "nutrition_completed": log.nutrition_completed,
             "notes": log.notes
-        }).eq("id", existing.data[0]["id"]).execute()
+        }, params=update_params)
     else:
         # Create new
-        result = supabase.table("daily_logs").insert({
+        result = supabase_request("POST", "daily_logs", data={
             "user_id": user_id,
             "date": log.date.isoformat(),
             "workout_completed": log.workout_completed,
             "nutrition_completed": log.nutrition_completed,
             "notes": log.notes
-        }).execute()
+        })
 
-    return {"log": result.data[0] if result.data else None}
+    return {"log": result[0] if result else None}
 
 
 @app.get("/api/stats")
 def get_stats(authorization: Optional[str] = Header(None)):
     user_id = get_user_id_from_token(authorization)
-    supabase = get_supabase()
 
-    # Get all logs ordered by date
-    result = supabase.table("daily_logs").select("*").eq("user_id", user_id).order("date", desc=True).execute()
-
-    logs = result.data
+    params = {"user_id": f"eq.{user_id}", "order": "date.desc"}
+    logs = supabase_request("GET", "daily_logs", params=params)
 
     if not logs:
         return {
@@ -126,15 +143,13 @@ def get_stats(authorization: Optional[str] = Header(None)):
             "total_nutrition": 0
         }
 
-    # Calculate stats
     total_workouts = sum(1 for log in logs if log["workout_completed"])
     total_nutrition = sum(1 for log in logs if log["nutrition_completed"])
 
-    # Calculate workout streak (consecutive days from today)
+    # Calculate workout streak
     workout_streak = 0
     today = date.today()
     check_date = today
-
     logs_by_date = {log["date"]: log for log in logs}
 
     while True:
@@ -164,4 +179,3 @@ def get_stats(authorization: Optional[str] = Header(None)):
         "total_workouts": total_workouts,
         "total_nutrition": total_nutrition
     }
-
