@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime, timedelta
 import os
-from mangum import Mangum
 
 from supabase import create_client, Client
 
@@ -166,5 +165,3 @@ def get_stats(authorization: Optional[str] = Header(None)):
         "total_nutrition": total_nutrition
     }
 
-# Export handler for Vercel
-handler = Mangum(app)
