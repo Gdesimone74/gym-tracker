@@ -1,5 +1,4 @@
 {
-  "outputDirectory": "static",
   "rewrites": [
     {
       "source": "/api/(.*)",
