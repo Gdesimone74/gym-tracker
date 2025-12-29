@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import date, datetime, timedelta
 import os
+from mangum import Mangum
 
 from supabase import create_client, Client
 
@@ -58,7 +59,7 @@ def health_check():
 
 @app.get("/api/logs")
 def get_logs(
-    authorization: str = Header(None),
+    authorization: Optional[str] = Header(None),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
@@ -79,7 +80,7 @@ def get_logs(
 @app.post("/api/logs")
 def create_or_update_log(
     log: DailyLogCreate,
-    authorization: str = Header(None)
+    authorization: Optional[str] = Header(None)
 ):
     user_id = get_user_id_from_token(authorization)
     supabase = get_supabase()
@@ -108,7 +109,7 @@ def create_or_update_log(
 
 
 @app.get("/api/stats")
-def get_stats(authorization: str = Header(None)):
+def get_stats(authorization: Optional[str] = Header(None)):
     user_id = get_user_id_from_token(authorization)
     supabase = get_supabase()
 
@@ -164,3 +165,6 @@ def get_stats(authorization: str = Header(None)):
         "total_workouts": total_workouts,
         "total_nutrition": total_nutrition
     }
+
+# Export handler for Vercel
+handler = Mangum(app)
