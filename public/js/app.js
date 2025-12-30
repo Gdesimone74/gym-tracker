@@ -6,13 +6,27 @@ let currentLog = null;
 
 // Get auth token
 async function getAuthToken() {
-    const session = await getSession();
-    return session?.access_token;
+    // Wait for session to be ready
+    let retries = 0;
+    while (retries < 10) {
+        const session = await getSession();
+        if (session?.access_token) {
+            return session.access_token;
+        }
+        await new Promise(resolve => setTimeout(resolve, 200));
+        retries++;
+    }
+    console.error('Could not get auth token');
+    return null;
 }
 
 // API helper
 async function apiRequest(endpoint, options = {}) {
     const token = await getAuthToken();
+
+    if (!token) {
+        throw new Error('No auth token available');
+    }
 
     const response = await fetch(`${API_BASE}${endpoint}`, {
         ...options,
