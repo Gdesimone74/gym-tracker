@@ -28,8 +28,8 @@ class DailyLogCreate(BaseModel):
     notes: Optional[str] = None
 
 
-def get_user_id_from_token(authorization: str) -> str:
-    """Extract user_id from Supabase JWT token"""
+def get_user_id_and_token(authorization: str) -> tuple:
+    """Extract user_id and token from Supabase JWT token"""
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
 
@@ -38,17 +38,17 @@ def get_user_id_from_token(authorization: str) -> str:
     try:
         # Decode JWT without verification (Supabase already verified it)
         decoded = jwt.decode(token, options={"verify_signature": False})
-        return decoded.get("sub")
+        return decoded.get("sub"), token
     except Exception:
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
-def supabase_request(method: str, endpoint: str, data: dict = None, params: dict = None):
+def supabase_request(method: str, endpoint: str, user_token: str, data: dict = None, params: dict = None):
     """Make request to Supabase REST API"""
     url = f"{SUPABASE_URL}/rest/v1/{endpoint}"
     headers = {
         "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Authorization": f"Bearer {user_token}",
         "Content-Type": "application/json",
         "Prefer": "return=representation"
     }
@@ -78,7 +78,7 @@ def get_logs(
     start_date: Optional[date] = None,
     end_date: Optional[date] = None
 ):
-    user_id = get_user_id_from_token(authorization)
+    user_id, token = get_user_id_and_token(authorization)
 
     params = {"user_id": f"eq.{user_id}", "order": "date.desc"}
 
@@ -91,7 +91,7 @@ def get_logs(
         else:
             params["date"] = f"lte.{end_date.isoformat()}"
 
-    logs = supabase_request("GET", "daily_logs", params=params)
+    logs = supabase_request("GET", "daily_logs", token, params=params)
     return {"logs": logs}
 
 
@@ -100,23 +100,23 @@ def create_or_update_log(
     log: DailyLogCreate,
     authorization: Optional[str] = Header(None)
 ):
-    user_id = get_user_id_from_token(authorization)
+    user_id, token = get_user_id_and_token(authorization)
 
     # Check if log exists for this date
     params = {"user_id": f"eq.{user_id}", "date": f"eq.{log.date.isoformat()}"}
-    existing = supabase_request("GET", "daily_logs", params=params)
+    existing = supabase_request("GET", "daily_logs", token, params=params)
 
     if existing:
         # Update existing
         update_params = {"id": f"eq.{existing[0]['id']}"}
-        result = supabase_request("PATCH", "daily_logs", data={
+        result = supabase_request("PATCH", "daily_logs", token, data={
             "workout_completed": log.workout_completed,
             "nutrition_completed": log.nutrition_completed,
             "notes": log.notes
         }, params=update_params)
     else:
         # Create new
-        result = supabase_request("POST", "daily_logs", data={
+        result = supabase_request("POST", "daily_logs", token, data={
             "user_id": user_id,
             "date": log.date.isoformat(),
             "workout_completed": log.workout_completed,
@@ -129,10 +129,10 @@ def create_or_update_log(
 
 @app.get("/api/stats")
 def get_stats(authorization: Optional[str] = Header(None)):
-    user_id = get_user_id_from_token(authorization)
+    user_id, token = get_user_id_and_token(authorization)
 
     params = {"user_id": f"eq.{user_id}", "order": "date.desc"}
-    logs = supabase_request("GET", "daily_logs", params=params)
+    logs = supabase_request("GET", "daily_logs", token, params=params)
 
     if not logs:
         return {
