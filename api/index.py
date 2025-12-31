@@ -26,6 +26,7 @@ class DailyLogCreate(BaseModel):
     workout_completed: bool = False
     nutrition_completed: bool = False
     notes: Optional[str] = None
+    exercises: Optional[list] = []
 
 
 def get_user_id_and_token(authorization: str) -> tuple:
@@ -112,7 +113,8 @@ def create_or_update_log(
         result = supabase_request("PATCH", "daily_logs", token, data={
             "workout_completed": log.workout_completed,
             "nutrition_completed": log.nutrition_completed,
-            "notes": log.notes
+            "notes": log.notes,
+            "exercises": log.exercises
         }, params=update_params)
     else:
         # Create new
@@ -121,10 +123,24 @@ def create_or_update_log(
             "date": log.date.isoformat(),
             "workout_completed": log.workout_completed,
             "nutrition_completed": log.nutrition_completed,
-            "notes": log.notes
+            "notes": log.notes,
+            "exercises": log.exercises
         })
 
     return {"log": result[0] if result else None}
+
+
+@app.delete("/api/logs/{log_date}")
+def delete_log(
+    log_date: date,
+    authorization: Optional[str] = Header(None)
+):
+    user_id, token = get_user_id_and_token(authorization)
+
+    params = {"user_id": f"eq.{user_id}", "date": f"eq.{log_date.isoformat()}"}
+    supabase_request("DELETE", "daily_logs", token, params=params)
+
+    return {"success": True}
 
 
 @app.get("/api/stats")

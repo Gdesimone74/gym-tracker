@@ -3,4 +3,5 @@ __pycache__/
 *.py[cod]
 .vercel
 node_modules/
+dist/
 .DS_Store
